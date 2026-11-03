@@ -81,7 +81,7 @@ jobs:
       - name: Install inspect-robots main
         run: |
           uv venv --python 3.12
-          uv pip install "inspect-robots @ git+https://github.com/robocurve/inspect-robots" pytest
+          uv pip install "inspect-robots @ git+https://github.com/robocurve/inspect-robots" pytest "pillow>=10"
           uv pip install --no-deps -e .
       - name: Pytest
         run: uv run --no-sync pytest -q
@@ -116,7 +116,7 @@ jobs:
         run: |
           existing=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "CI is red on main in:title" --json number --jq length)
           if [ "$existing" = "0" ]; then
-            gh issue create -R "$GITHUB_REPOSITORY"               --title "CI is red on main (${GITHUB_SHA:0:8})"               --body "CI failed on a push to main: $RUN_URL — stop-the-line: fix forward or revert before merging anything else. If the failure is transient (network, external deps), re-run the failed jobs and close this."
+            gh issue create -R "$GITHUB_REPOSITORY"               --title "CI is red on main (${GITHUB_SHA:0:8})"               --body "CI failed on a push to main: $RUN_URL. Stop the line: fix forward or revert before merging anything else. If the failure is transient (network, external deps), re-run the failed jobs and close this."
           else
             echo "an open red-main issue already exists; not filing another"
           fi

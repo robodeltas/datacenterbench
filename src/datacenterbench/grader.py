@@ -79,10 +79,14 @@ _published.keys = judge_keys
 
 def jpeg_bytes(image: npt.NDArray[np.uint8]) -> bytes:
     """Encode a camera frame as JPEG, the format the published photos had."""
+    frame = np.asarray(image)
+    if frame.dtype != np.uint8:
+        # Casting would change the picture (0.8 becomes 0, 256 becomes 0), so refuse instead.
+        raise ValueError(
+            f"a camera frame is {frame.dtype}, not uint8; the judges need 8-bit images"
+        )
     buf = io.BytesIO()
-    Image.fromarray(np.asarray(image, dtype=np.uint8)).convert("RGB").save(
-        buf, format="JPEG", quality=JPEG_QUALITY
-    )
+    Image.fromarray(frame).convert("RGB").save(buf, format="JPEG", quality=JPEG_QUALITY)
     return buf.getvalue()
 
 
@@ -92,34 +96,38 @@ def _images(inline: Mapping[str, Any] | None, refs: Mapping[str, Any] | None) ->
     return {camera: ref.load() for camera, ref in (refs or {}).items()}
 
 
-def frame_width(record: TrialRecord) -> int:
-    """The width of the trial's start frames (the narrowest camera)."""
-    start = (
-        _images(record.steps[0].observation.images, record.steps[0].image_refs)
-        if record.steps
-        else {}
-    )
-    widths = [int(np.asarray(start[name]).shape[1]) for name in CAMERAS.values() if name in start]
-    return min(widths) if widths else 0
-
-
-def record_evidence(record: TrialRecord) -> tuple[list[tuple[str, bytes]], str]:
-    """The judges' photos from the trial record, captioned as the published ones were, and where the
-    end came from.
+def trial_frames(record: TrialRecord) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
+    """The trial's start and end images by camera, and where the end came from.
 
     Start: the frame before the first step. End: the embodiment's photo after the arms parked when
-    it took one, else the frame after the last step.
+    it took one (``"parked"``), else the frame after the last step (``"last frame"``).
     """
     if not record.steps:
         raise ValueError("the trial recorded no steps, so there is nothing to judge")
     start = _images(record.steps[0].observation.images, record.steps[0].image_refs)
     parked = record.parked_observation
     if parked is not None and parked.images:
-        end, end_from, end_caption = parked.images, "parked", "end of trial, arms parked"
-    else:
-        last = record.steps[-1]
-        end = _images(last.result.observation.images, last.result_image_refs)
-        end_from, end_caption = "last frame", "end of trial"
+        return start, parked.images, "parked"
+    last = record.steps[-1]
+    return start, _images(last.result.observation.images, last.result_image_refs), "last frame"
+
+
+def frame_width(*frames: Mapping[str, Any]) -> int:
+    """The width of the narrowest judged camera image in ``frames`` (0 when there is none)."""
+    widths = [
+        int(np.asarray(images[name]).shape[1])
+        for images in frames
+        for name in CAMERAS.values()
+        if name in images
+    ]
+    return min(widths) if widths else 0
+
+
+def frame_evidence(
+    start: Mapping[str, Any], end: Mapping[str, Any], end_from: str
+) -> list[tuple[str, bytes]]:
+    """The judges' photos from the trial's frames, captioned as the published ones were."""
+    end_caption = "end of trial, arms parked" if end_from == "parked" else "end of trial"
     evidence = []
     for images, when in ((start, "start of trial"), (end, end_caption)):
         for cam, name in CAMERAS.items():
@@ -128,7 +136,7 @@ def record_evidence(record: TrialRecord) -> tuple[list[tuple[str, bytes]], str]:
                     f"no {name} image at the {when}; the judges need all three cameras"
                 )
             evidence.append((f"{when}, {_published.CAM_NAMES[cam]}", jpeg_bytes(images[name])))
-    return evidence, end_from
+    return evidence
 
 
 def scene_task(scene: Scene) -> dict[str, Any]:
@@ -215,16 +223,16 @@ class JudgesGrader:
             if has_rubric_score(record, task):
                 return
             _set_aside_verdict(record)
-            width = frame_width(record)
-            if record.steps and width < self._min_width:
+            start, end, end_from = trial_frames(record)
+            width = frame_width(start, end)
+            if 0 < width < self._min_width:
                 record.metadata["grading_error"] = (
                     f"the camera frames are {width} px wide, too small for the judges "
                     "(the published photos were 1920 x 1080); score it by hand, or grade "
                     "full-resolution start and end photos with `datacenterbench grade`"
                 )
                 return
-            evidence, end_from = record_evidence(record)
-            result = self._grade(evidence, scene.instruction, task)
+            result = self._grade(frame_evidence(start, end, end_from), scene.instruction, task)
         except Exception as exc:  # post-rollout: an ungraded trial beats a crashed run
             reason = " ".join(str(exc).split())[:_ERROR_LIMIT] or type(exc).__name__
             record.metadata["grading_error"] = reason

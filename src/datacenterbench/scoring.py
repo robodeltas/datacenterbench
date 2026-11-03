@@ -6,10 +6,16 @@ trial's judgement (for example ``"0.5"``); this scorer only reads it, so a saved
 way again.
 
 A trial with no valid rubric score is never scored 0: it was not graded, so a person scores it.
-Inspect Robots versions that support abstentions (after 0.60) get an abstained score. 0.59 and 0.60
-have none, so they get ``NotScored`` raised instead, which leaves the trial out of the mean and
-marks the run's log as an error with the reason. 0.58 cannot leave a trial out at all, so the
-package needs 0.59 or later.
+Either way the trial is left out of the mean and the run's log ends as an error with the reason:
+
+- When a grader tried and recorded why in ``metadata["grading_error"]``, Inspect Robots versions
+  that support abstentions (after 0.60) get an abstained score, and Inspect Robots itself ends the
+  run as an error for the ungraded trial.
+- Otherwise (0.59 and 0.60, which have no abstentions, or no grader, or a grader that recorded
+  something other than a rubric score, such as the built-in ``operator``'s ``y``) the scorer raises
+  ``NotScored``, which Inspect Robots logs as a scorer error.
+
+0.58 cannot leave a trial out at all, so the package needs 0.59 or later.
 """
 
 from __future__ import annotations
@@ -48,7 +54,7 @@ class _RubricScore:
         if reason is None:
             verdict = str(record.operator_judgement)
             return Score(value=float(verdict), explanation=f"rubric score {verdict.strip()}")
-        if ABSTAINS:
+        if ABSTAINS and record.operator_judgement is None and record.metadata.get("grading_error"):
             return Score(value=None, explanation=reason)  # type: ignore[arg-type]
         raise NotScored(reason)
 

@@ -30,8 +30,8 @@ from datacenterbench.grader import (
     frame_width,
     jpeg_bytes,
     judge_keys,
-    record_evidence,
     scene_task,
+    trial_frames,
 )
 
 from .fakes import ThreeCameraRig, frame_image
@@ -82,6 +82,14 @@ def run(
 def ungraded_run(log: Any) -> bool:
     text = f"{log.error} {[s.error for s in log.samples]}"
     return log.status == "error" and ("not scored" in text or "ungraded" in text)
+
+
+@pytest.fixture(autouse=True)
+def placeholder_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Newer Inspect Robots runs the grader's preflight, which needs keys even with the calls faked.
+    monkeypatch.delenv("JUDGE_KEYS", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "o")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
 
 
 @pytest.fixture
@@ -161,6 +169,28 @@ def test_the_keypad_task_goes_to_a_person_with_the_judges_as_a_cross_check(judge
     )
 
 
+def test_narrow_end_frames_are_left_for_a_person_too(judges: Judges) -> None:
+    class ParksSmall(ThreeCameraRig):
+        def observe_parked(self) -> Observation:
+            return Observation(images={c: frame_image(99, c, 8) for c in self.cameras}, state={})
+
+    log = run(JudgesGrader(min_width=12), rig=ParksSmall(size=16))
+    assert judges.sent == []
+    assert "8 px wide" in log.samples[0].trial_metadata[0]["grading_error"] and ungraded_run(log)
+
+
+def test_frames_that_are_not_8_bit_are_refused(judges: Judges) -> None:
+    class ParksFloat(ThreeCameraRig):
+        def observe_parked(self) -> Observation:
+            return Observation(images={c: np.full((8, 8, 3), 0.8) for c in self.cameras}, state={})
+
+    log = run(JudgesGrader(min_width=1), rig=ParksFloat(size=8))
+    assert judges.sent == []
+    assert "float64, not uint8" in log.samples[0].trial_metadata[0]["grading_error"]
+    with pytest.raises(ValueError, match="uint16, not uint8"):
+        jpeg_bytes(np.full((4, 4, 3), 256, dtype=np.uint16))
+
+
 def test_parked_photo_and_frame_store(judges: Judges, tmp_path: Path) -> None:
     class Parks(ThreeCameraRig):
         def observe_parked(self) -> Observation:
@@ -178,9 +208,9 @@ def test_parked_photo_and_frame_store(judges: Judges, tmp_path: Path) -> None:
 def test_ungradable_cases() -> None:
     task_scene = make_task(KNOB).scenes[0]
     record = TrialRecord(scene_id="knob", epoch=0, seed=0)
-    assert frame_width(record) == 0
+    assert frame_width({}, {"other_cam": np.zeros((4, 4, 3))}) == 0
     with pytest.raises(ValueError, match="no steps"):
-        record_evidence(record)
+        trial_frames(record)
     JudgesGrader(grade=lambda *a: {}, min_width=1).grade(record, task_scene)
     assert "no steps" in record.metadata["grading_error"]
     log = run(
@@ -188,6 +218,8 @@ def test_ungradable_cases() -> None:
         rig=ThreeCameraRig(size=8, cameras=("top_cam", "left_cam")),
     )
     assert "no right_cam image" in log.samples[0].trial_metadata[0]["grading_error"]
+    log = run(JudgesGrader(grade=lambda *a: {}), rig=ThreeCameraRig(size=8, cameras=("wrist",)))
+    assert "no top_cam image" in log.samples[0].trial_metadata[0]["grading_error"]
     other = TrialRecord(scene_id="x", epoch=0, seed=0)
     JudgesGrader(grade=lambda *a: {}).grade(other, Scene(id="x", instruction="Do it."))
     assert "is it a datacenterbench task?" in other.metadata["grading_error"]
@@ -208,6 +240,11 @@ def test_a_console_verdict_does_not_stop_the_judges(judges: Judges, verdict: str
         log.samples[0].reduced["rubric_score"] == 0.5
         and kept[0].metadata["console_verdict"] == verdict
     )
+
+
+def test_without_a_grader_the_run_ends_as_an_error() -> None:
+    log = run(None)
+    assert ungraded_run(log) and "no rubric score recorded" in str(log.error)
 
 
 def test_a_recorded_rubric_score_is_kept() -> None:

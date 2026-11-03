@@ -43,14 +43,24 @@ UNSCORED = [
 ]
 
 
-@pytest.mark.parametrize(("trial", "why"), UNSCORED)
-def test_unscored_abstains_when_supported(
+def test_a_trial_the_grader_gave_up_on_abstains_when_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Inspect Robots counts this trial as ungraded and ends the run as an error itself.
+    monkeypatch.setattr(scoring, "ABSTAINS", True)
+    score = rubric_score()(record(None, grading_error="Astra API HTTP 500"), LEVELS)
+    assert score.value is None
+    assert "the judge failed: Astra API HTTP 500" in (score.explanation or "")
+
+
+@pytest.mark.parametrize(("trial", "why"), UNSCORED[:-2] + UNSCORED[-1:])
+def test_a_trial_nobody_explained_is_a_scorer_error_even_with_abstentions(
     trial: TrialRecord, why: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # No grading_error: an abstention would leave the run "success", so raise instead.
     monkeypatch.setattr(scoring, "ABSTAINS", True)
-    score = rubric_score()(trial, LEVELS)
-    assert score.value is None
-    assert why in (score.explanation or "")
+    with pytest.raises(scoring.NotScored, match=why.replace("(", r"\(")):
+        rubric_score()(trial, LEVELS)
 
 
 @pytest.mark.parametrize(("trial", "why"), UNSCORED)
