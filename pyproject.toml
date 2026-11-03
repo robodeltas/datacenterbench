@@ -1,0 +1,156 @@
+[build-system]
+requires = ["hatchling>=1.18", "hatch-vcs>=0.3", "hatch-fancy-pypi-readme>=24.1"]
+build-backend = "hatchling.build"
+
+[project]
+name = "datacenterbench"
+dynamic = ["version", "readme"]
+description = "DataCenterBench Tier 1: ten data-center maintenance steps for robot arms, with the two-judge scoring behind every published score, built on Inspect Robots."
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Robocurve" }]
+keywords = ["robotics", "benchmark", "llm-agents", "bimanual", "manipulation", "data-center"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+# 0.59 is the first version that leaves a trial out when its scorer raises (see scoring.py).
+dependencies = ["inspect-robots>=0.59", "numpy>=1.24", "pillow>=10"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/robocurve/datacenterbench"
+Results = "https://robocurve.org/datacenterbench/"
+Collection = "https://github.com/robocurve/worldevals"
+Framework = "https://github.com/robocurve/inspect-robots"
+
+[project.scripts]
+datacenterbench = "datacenterbench.cli:main"
+
+# Inspect Robots resolves from PyPI and discovers these installed entry points.
+[project.entry-points."inspect_robots.tasks"]
+"datacenterbench/unplug" = "datacenterbench.tasks:unplug"
+"datacenterbench/knob" = "datacenterbench.tasks:knob"
+"datacenterbench/toggle" = "datacenterbench.tasks:toggle"
+"datacenterbench/key" = "datacenterbench.tasks:key"
+"datacenterbench/cover" = "datacenterbench.tasks:cover"
+"datacenterbench/slider" = "datacenterbench.tasks:slider"
+"datacenterbench/keypad" = "datacenterbench.tasks:keypad"
+"datacenterbench/plug" = "datacenterbench.tasks:plug"
+"datacenterbench/join" = "datacenterbench.tasks:join"
+"datacenterbench/clip" = "datacenterbench.tasks:clip"
+
+[project.entry-points."inspect_robots.graders"]
+datacenterbench_judges = "datacenterbench.grader:judges_grader"
+datacenterbench_operator = "datacenterbench.grader:operator_grader"
+
+[project.entry-points."inspect_robots.scorers"]
+rubric_score = "datacenterbench.scoring:rubric_score"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/datacenterbench"]
+
+
+# ---------------------------------------------------------------------------
+# Versioning: single-source the version from git tags via hatch-vcs.
+# ---------------------------------------------------------------------------
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Before/without tags (e.g. shallow CI checkouts), fall back instead of failing.
+version_scheme = "guess-next-dev"
+fallback_version = "0.0.0"
+
+[tool.ruff]
+# _published.py is the published judge copied byte for byte; its hash is pinned by a test.
+extend-exclude = ["src/datacenterbench/_published.py"]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "D1"]
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D1", "C408"]
+# Instruction and rubric text are copied exactly from the release (long lines).
+"src/datacenterbench/specs.py" = ["E501", "RUF001"]
+"tools/**" = ["D1"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["datacenterbench"]
+
+[tool.mypy]
+# numpy >= 2.5 ships stubs that use PEP 695 `type` statements, which mypy only
+# accepts when targeting >= 3.12, so type-check against 3.12 while runtime
+# support stays >= 3.10 (ruff's target-version enforces the 3.10 syntax floor).
+python_version = "3.12"
+strict = true
+files = ["src/datacenterbench"]
+# The verbatim judge has no annotations; typed callers may still call it.
+untyped_calls_exclude = ["datacenterbench._published"]
+
+[[tool.mypy.overrides]]
+module = "datacenterbench._published"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["datacenterbench"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "^\\s*\\.\\.\\.$",
+    ": \\.\\.\\.$",
+    "pragma: no cover",
+    # Verbatim functions that read Robocurve's own key file and task list (judge_keys() and the specs replace them).
+    "^def keys\\(",
+    "^def task_by_id\\(",
+    "^def grade_folder\\(",
+]
+
+# PyPI readme: identical to README.md except GitHub-only alert syntax
+# (e.g. `> [!NOTE]`) is rewritten to bold blockquotes, which PyPI renders.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(?m)^> \[!NOTE\][ \t]*$'
+replacement = '> **Note:**'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(?m)^> \[!IMPORTANT\][ \t]*$'
+replacement = '> **Important:**'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '(?m)^> \[!WARNING\][ \t]*$'
+replacement = '> **Warning:**'
